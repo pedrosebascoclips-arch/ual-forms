@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SB_URL, SB_KEY, headers } from "./supabase";
 import { autoCapName } from "./autoformat";
@@ -8,15 +8,15 @@ import DocUpload from "./DocUpload";
 import { C } from "./theme";
 
 const BROKER_STAGES = [
-  ["Active",           "#6B7280"],
-  ["Car Chosen",       "#A78BFA"],
-  ["Numbers Accepted", "#F59E0B"],
-  ["App Submitted",    "#3B82F6"],
-  ["Approved",         "#34D399"],
-  ["Delivery Set",     "#22D3EE"],
+  ["Active",                "#6B7280"],
+  ["Car Chosen",            "#A78BFA"],
+  ["Needs Numbers",         "#F59E0B"],
+  ["Needs Credit Approval", "#3B82F6"],
+  ["Approved",              "#34D399"],
+  ["Delivery Set",          "#22D3EE"],
 ];
 
-const STAGE_ORDER = ["Active", "Car Chosen", "Numbers Accepted", "App Submitted", "Approved", "Delivery Set"];
+const STAGE_ORDER = ["Active", "Car Chosen", "Needs Numbers", "Needs Credit Approval", "Approved", "Delivery Set"];
 
 function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -113,9 +113,54 @@ const Label = ({ children, required }) => (
   </label>
 );
 
+function PinBoxes({ value, onChange, onComplete }) {
+  const refs = [useRef(null), useRef(null), useRef(null), useRef(null)];
+  const handleKey = (i, e) => {
+    if (e.key === "Backspace" && !value[i] && i > 0) {
+      refs[i-1].current?.focus();
+    }
+  };
+  const handleChange = (i, v) => {
+    const d = v.replace(/\D/g, "").slice(-1);
+    const next = [...value];
+    next[i] = d;
+    onChange(next);
+    if (d && i < 3) refs[i+1].current?.focus();
+    if (d && i === 3) onComplete?.(next.join(""));
+  };
+  return (
+    <div style={{ display: "flex", gap: "12px", justifyContent: "center", margin: "20px 0" }}>
+      {[0,1,2,3].map(i => (
+        <input
+          key={i}
+          ref={refs[i]}
+          type="tel"
+          inputMode="numeric"
+          maxLength={1}
+          value={value[i]}
+          onChange={e => handleChange(i, e.target.value)}
+          onKeyDown={e => handleKey(i, e)}
+          style={{
+            width: "56px", height: "64px", textAlign: "center",
+            fontSize: "24px", fontWeight: "700",
+            background: "rgba(255,255,255,0.06)",
+            border: "1px solid rgba(255,255,255,0.15)",
+            borderRadius: "14px", color: "#fff",
+            outline: "none", fontFamily: "inherit",
+            WebkitAppearance: "none",
+            caretColor: "transparent",
+          }}
+          onFocus={e => { e.target.style.borderColor = "rgba(59,130,246,0.6)"; e.target.style.boxShadow = "0 0 0 3px rgba(59,130,246,0.1)"; }}
+          onBlur={e => { e.target.style.borderColor = "rgba(255,255,255,0.15)"; e.target.style.boxShadow = "none"; }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function BrokerForm() {
   const [form, setForm] = useState({
-    broker_name: "", client_name: "", car_want: "",
+    broker_name: "", client_name: "",
     car_input_type: "link", car_link: "", car_vin: "",
     deal_type: "Lease", client_stage: "",
     trade_in: false, trade_details: "", trade_vin: "", notes: "",
@@ -131,8 +176,17 @@ export default function BrokerForm() {
   const [error, setError] = useState("");
 
   const [brokers, setBrokers] = useState([]);
-  const [brokerCode, setBrokerCode] = useState("");
-  const [brokerStatus, setBrokerStatus] = useState(null); // null | "found" | "not_found"
+
+  const [authStep, setAuthStep] = useState("phone"); // "phone" | "pin" | "register"
+  const [phone, setPhone] = useState("");
+  const [pinInput, setPinInput] = useState(["","","",""]);
+  const [pinError, setPinError] = useState("");
+  const [regName, setRegName] = useState("");
+  const [regPin, setRegPin] = useState(["","","",""]);
+  const [regPinConfirm, setRegPinConfirm] = useState(["","","",""]);
+  const [regError, setRegError] = useState("");
+  const [brokerVerified, setBrokerVerified] = useState(false);
+  const [matchedBroker, setMatchedBroker] = useState(null);
 
   const [view, setView] = useState("success"); // "success" | "clients"
   const [myClients, setMyClients] = useState([]);
@@ -151,22 +205,35 @@ export default function BrokerForm() {
     })();
   }, []);
 
-  const handleBrokerCodeChange = (code) => {
-    const val = code.toUpperCase();
-    setBrokerCode(val);
-    if (!val.trim()) {
-      setBrokerStatus(null);
-      setBrokerId(null);
-      setForm(p => ({ ...p, broker_name: "" }));
-      return;
-    }
-    const match = brokers.find(b => b.broker_code?.toUpperCase() === val.trim());
-    if (match) {
-      setBrokerStatus("found");
-      setBrokerId(match.id);
-      setForm(p => ({ ...p, broker_name: match.name || match.company || "" }));
+  const fmtPhone = (raw) => {
+    const d = raw.replace(/\D/g, "").slice(0, 10);
+    if (d.length <= 3) return d;
+    if (d.length <= 6) return `(${d.slice(0,3)}) ${d.slice(3)}`;
+    return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  };
+  const normalize = (p) => (p || "").replace(/\D/g, "");
+
+  const handlePhoneChange = (raw) => {
+    const formatted = fmtPhone(raw);
+    setPhone(formatted);
+    const digits = normalize(formatted);
+    if (digits.length === 10) {
+      const match = brokers.find(b => normalize(b.phone) === digits);
+      if (match) {
+        setMatchedBroker(match);
+        setForm(p => ({ ...p, broker_name: match.name || match.company || "" }));
+        setBrokerId(match.id);
+        // Short delay then advance
+        setTimeout(() => {
+          if (match.pin) {
+            setAuthStep("pin");
+          } else {
+            setAuthStep("register");
+          }
+        }, 400);
+      }
     } else {
-      setBrokerStatus("not_found");
+      setMatchedBroker(null);
       setBrokerId(null);
       setForm(p => ({ ...p, broker_name: "" }));
     }
@@ -188,8 +255,7 @@ export default function BrokerForm() {
   const set = (key, val) => setForm(p => ({ ...p, [key]: val }));
 
   const handleSubmit = async () => {
-    if (!brokerCode.trim()) { setError("Broker code is required"); return; }
-    if (brokerStatus !== "found") { setError("Please enter a valid broker code — contact UAL if you don't have one"); return; }
+    if (!brokerVerified) { setError("Please log in first"); return; }
     if (!form.client_name.trim()) { setError("Client name is required"); return; }
     setSubmitting(true); setError("");
     try {
@@ -216,7 +282,6 @@ export default function BrokerForm() {
         method: "POST", headers: headers(),
         body: JSON.stringify({
           name: form.client_name.trim(),
-          car_want: form.car_want.trim(),
           car_link: form.car_input_type === "link" ? form.car_link.trim() || null : null,
           car_vin: form.car_input_type === "vin" ? form.car_vin.trim() || null : null,
           deal_type: form.deal_type,
@@ -352,7 +417,7 @@ export default function BrokerForm() {
               [insuranceDoc, registrationDoc, licenseDoc].forEach(f => { if (f?.preview) URL.revokeObjectURL(f.preview); });
               setDone(false); setTradePhotos([]); setInsuranceDoc(null); setRegistrationDoc(null); setLicenseDoc(null);
               setView("success"); setMyClients([]);
-              setForm(p => ({ ...p, client_name: "", car_want: "", car_input_type: "link", car_link: "", car_vin: "", deal_type: "Lease", client_stage: "", trade_in: false, trade_details: "", trade_vin: "", notes: "" }));
+              setForm(p => ({ ...p, client_name: "", car_input_type: "link", car_link: "", car_vin: "", deal_type: "Lease", client_stage: "", trade_in: false, trade_details: "", trade_vin: "", notes: "" }));
             }} style={{
               width: "100%", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)",
               borderRadius: "12px", padding: "14px 28px", color: C.blue,
@@ -386,6 +451,147 @@ export default function BrokerForm() {
         )}
 
       </motion.div>
+    </div>
+  );
+
+  // ═══ AUTH SCREEN ═══
+  if (!brokerVerified) return (
+    <div style={{
+      minHeight: "100dvh", background: C.bg,
+      fontFamily: "'Inter',-apple-system,BlinkMacSystemFont,sans-serif",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      padding: "20px 16px",
+    }}>
+      {/* Background glow */}
+      <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
+        <div style={{ position: "absolute", top: "8%", left: "20%", width: "60%", height: "40%", background: "radial-gradient(ellipse,rgba(59,130,246,0.04),transparent 70%)", filter: "blur(80px)" }} />
+      </div>
+
+      <div style={{ width: "100%", maxWidth: "360px", position: "relative", zIndex: 1 }}>
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: "32px" }}>
+          <h1 style={{ fontSize: "26px", fontWeight: "800", margin: "0 0 8px", letterSpacing: "-0.5px", background: "linear-gradient(135deg, #FFFFFF 0%, rgba(255,255,255,0.7) 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+            Ultimate Auto Lease
+          </h1>
+          <span style={{ display: "inline-block", padding: "5px 16px", borderRadius: "100px", background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.12)", fontSize: "10px", fontWeight: "700", color: C.blue, textTransform: "uppercase", letterSpacing: "1.5px" }}>
+            Broker Portal
+          </span>
+        </div>
+
+        {/* Card */}
+        <div style={{ background: C.glass, backdropFilter: "blur(40px)", WebkitBackdropFilter: "blur(40px)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "20px", padding: "28px 24px", boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }}>
+
+          {/* SCREEN 1 — PHONE */}
+          {authStep === "phone" && (
+            <div>
+              <div style={{ fontSize: "18px", fontWeight: "800", color: C.text1, marginBottom: "6px" }}>Welcome</div>
+              <div style={{ fontSize: "13px", color: C.text3, marginBottom: "20px" }}>Enter your phone number to continue</div>
+              <Label required>Phone Number</Label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={e => handlePhoneChange(e.target.value)}
+                placeholder="(555) 555-5555"
+                style={{ width: "100%", padding: "14px 16px", background: C.input, border: `1px solid ${matchedBroker ? "rgba(52,211,153,0.35)" : normalize(phone).length === 10 && !matchedBroker ? "rgba(239,68,68,0.3)" : C.borderSubtle}`, borderRadius: "12px", color: C.text1, fontSize: "18px", letterSpacing: "1px", outline: "none", fontFamily: "inherit", boxSizing: "border-box", minHeight: "52px" }}
+              />
+              {matchedBroker && (
+                <div style={{ marginTop: "10px", padding: "10px 14px", borderRadius: "10px", background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.2)", fontSize: "13px", color: C.green, fontWeight: "600" }}>
+                  ✓ {matchedBroker.name || matchedBroker.company} — just a moment...
+                </div>
+              )}
+              {normalize(phone).length === 10 && !matchedBroker && (
+                <div style={{ marginTop: "10px", padding: "10px 14px", borderRadius: "10px", background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.15)", fontSize: "13px", color: C.text3 }}>
+                  Phone not recognized — contact UAL to get set up
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SCREEN 2 — PIN ENTRY (existing broker) */}
+          {authStep === "pin" && (
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "18px", fontWeight: "800", color: C.text1, marginBottom: "4px" }}>Welcome back</div>
+              <div style={{ fontSize: "14px", color: C.green, fontWeight: "600", marginBottom: "4px" }}>{matchedBroker?.name || ""}</div>
+              <div style={{ fontSize: "13px", color: C.text3, marginBottom: "4px" }}>Enter your 4-digit PIN</div>
+              <PinBoxes value={pinInput} onChange={setPinInput} onComplete={(val) => {
+                if (val === matchedBroker?.pin) {
+                  setBrokerVerified(true);
+                  setPinError("");
+                } else {
+                  setPinError("Incorrect PIN — try again");
+                  setPinInput(["","","",""]);
+                }
+              }} />
+              {pinError && <div style={{ fontSize: "13px", color: C.red, marginBottom: "10px" }}>{pinError}</div>}
+              <button onClick={() => {
+                if (pinInput.join("") === matchedBroker?.pin) {
+                  setBrokerVerified(true); setPinError("");
+                } else {
+                  setPinError("Incorrect PIN — try again");
+                  setPinInput(["","","",""]);
+                }
+              }} style={{ width: "100%", background: `linear-gradient(135deg, ${C.blue}, #2563EB)`, border: "none", borderRadius: "12px", padding: "16px", fontSize: "15px", fontWeight: "700", color: "#fff", cursor: "pointer", fontFamily: "inherit", marginTop: "4px" }}>
+                Continue →
+              </button>
+              <div style={{ marginTop: "14px", fontSize: "12px", color: C.text4 }}>Forgot PIN? Contact UAL to reset</div>
+              <button onClick={() => { setAuthStep("phone"); setPhone(""); setMatchedBroker(null); setBrokerId(null); setPinInput(["","","",""]); setPinError(""); setForm(p => ({ ...p, broker_name: "" })); }}
+                style={{ marginTop: "8px", background: "none", border: "none", color: C.text4, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>
+                ← Back
+              </button>
+            </div>
+          )}
+
+          {/* SCREEN 3 — REGISTRATION (first time) */}
+          {authStep === "register" && (
+            <div>
+              <div style={{ fontSize: "18px", fontWeight: "800", color: C.text1, marginBottom: "4px" }}>Set up your account</div>
+              <div style={{ fontSize: "13px", color: C.text3, marginBottom: "20px" }}>One-time setup for {matchedBroker?.company || "your account"}</div>
+              <div style={{ marginBottom: "14px" }}>
+                <Label required>Your Full Name</Label>
+                <input
+                  value={regName}
+                  onChange={e => setRegName(autoCapName(e.target.value))}
+                  placeholder="First Last"
+                  style={{ width: "100%", padding: "14px 16px", background: C.input, border: `1px solid ${C.borderSubtle}`, borderRadius: "12px", color: C.text1, fontSize: "15px", outline: "none", fontFamily: "inherit", boxSizing: "border-box", minHeight: "48px" }}
+                />
+              </div>
+              <Label required>Create a 4-Digit PIN</Label>
+              <PinBoxes value={regPin} onChange={setRegPin} />
+              <Label required>Confirm PIN</Label>
+              <PinBoxes value={regPinConfirm} onChange={setRegPinConfirm} />
+              {regError && <div style={{ fontSize: "13px", color: C.red, marginBottom: "10px", textAlign: "center" }}>{regError}</div>}
+              <button onClick={async () => {
+                if (!regName.trim()) { setRegError("Please enter your name"); return; }
+                const p1 = regPin.join("");
+                const p2 = regPinConfirm.join("");
+                if (p1.length < 4) { setRegError("PIN must be 4 digits"); return; }
+                if (p1 !== p2) { setRegError("PINs don't match — try again"); setRegPinConfirm(["","","",""]); return; }
+                setRegError("");
+                try {
+                  const r = await fetch(`${SB_URL}/rest/v1/brokers?id=eq.${matchedBroker.id}`, {
+                    method: "PATCH",
+                    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+                    body: JSON.stringify({ name: regName.trim(), pin: p1 }),
+                  });
+                  if (!r.ok) throw new Error();
+                  setForm(p => ({ ...p, broker_name: regName.trim() }));
+                  setMatchedBroker(prev => ({ ...prev, name: regName.trim(), pin: p1 }));
+                  setBrokerVerified(true);
+                } catch {
+                  setRegError("Something went wrong — please try again");
+                }
+              }} style={{ width: "100%", background: `linear-gradient(135deg, ${C.blue}, #2563EB)`, border: "none", borderRadius: "12px", padding: "16px", fontSize: "15px", fontWeight: "700", color: "#fff", cursor: "pointer", fontFamily: "inherit", marginTop: "8px" }}>
+                Create Account →
+              </button>
+              <button onClick={() => { setAuthStep("phone"); setPhone(""); setMatchedBroker(null); setBrokerId(null); setRegName(""); setRegPin(["","","",""]); setRegPinConfirm(["","","",""]); setRegError(""); setForm(p => ({ ...p, broker_name: "" })); }}
+                style={{ width: "100%", marginTop: "10px", background: "none", border: "none", color: C.text4, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>
+                ← Back
+              </button>
+            </div>
+          )}
+
+        </div>
+      </div>
     </div>
   );
 
@@ -435,56 +641,19 @@ export default function BrokerForm() {
             boxShadow: "0 8px 32px rgba(0,0,0,0.3), 0 2px 8px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.06)",
           }}>
 
-          {/* ═══ YOUR INFO ═══ */}
-          <Section title="Your Info" icon="👤" defaultOpen accent={C.blue}>
-            <div style={{ marginBottom: brokerStatus ? "10px" : "0" }}>
-              <Label required>Broker Code</Label>
-              <input
-                value={brokerCode}
-                onChange={e => handleBrokerCodeChange(e.target.value)}
-                placeholder="e.g. UAL-001"
-                style={{
-                  width: "100%", padding: "14px 16px",
-                  background: C.input,
-                  border: `1px solid ${brokerStatus === "found" ? "rgba(52,211,153,0.35)" : brokerStatus === "not_found" ? "rgba(239,68,68,0.3)" : C.borderSubtle}`,
-                  borderRadius: "12px", color: C.text1, fontSize: "15px",
-                  outline: "none", fontFamily: "inherit",
-                  boxSizing: "border-box", WebkitAppearance: "none",
-                  minHeight: "48px", transition: "all 0.2s cubic-bezier(0.25,0.46,0.45,0.94)",
-                  letterSpacing: "1px",
-                }}
-                onFocus={e => { e.target.style.borderColor = C.borderFocus; e.target.style.boxShadow = "0 0 0 4px rgba(59,130,246,0.08)"; }}
-                onBlur={e => {
-                  e.target.style.borderColor = brokerStatus === "found" ? "rgba(52,211,153,0.35)" : brokerStatus === "not_found" ? "rgba(239,68,68,0.3)" : C.borderSubtle;
-                  e.target.style.boxShadow = "none";
-                }}
-              />
-            </div>
-            <AnimatePresence>
-              {brokerStatus === "found" && (
-                <motion.div key="found" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                  style={{ padding: "10px 14px", borderRadius: "10px", background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.2)", fontSize: "13px", color: C.green, fontWeight: "600" }}>
-                  Welcome, {form.broker_name}!
-                </motion.div>
-              )}
-              {brokerStatus === "not_found" && (
-                <motion.div key="not_found" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                  style={{ padding: "10px 14px", borderRadius: "10px", background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.15)", fontSize: "13px", color: C.text3, fontWeight: "500" }}>
-                  Code not found — contact UAL to get your broker code
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </Section>
+          {/* Verified badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px", padding: "10px 14px", borderRadius: "10px", background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.15)" }}>
+            <span style={{ fontSize: "13px" }}>✓</span>
+            <span style={{ color: "#34D399", fontSize: "13px", fontWeight: "600" }}>{form.broker_name}</span>
+            <button onClick={() => { setBrokerVerified(false); setAuthStep("phone"); setPhone(""); setMatchedBroker(null); setBrokerId(null); setPinInput(["","","",""]); setPinError(""); setForm(p => ({ ...p, broker_name: "" })); }}
+              style={{ marginLeft: "auto", background: "none", border: "none", color: "rgba(255,255,255,0.3)", cursor: "pointer", fontSize: "11px", fontFamily: "inherit" }}>Switch</button>
+          </div>
 
           {/* ═══ CLIENT DETAILS ═══ */}
           <Section title="Client Details" icon="📋" defaultOpen accent={C.cyan}>
             <div style={fieldGap}>
               <Label required>Client Name</Label>
               {inp(form.client_name, "client_name", "Full name")}
-            </div>
-            <div style={fieldGap}>
-              <Label>What Car Are They Looking For?</Label>
-              {inp(form.car_want, "car_want", "e.g. BMW X5, Tesla Model Y")}
             </div>
             <div style={fieldGap}>
               <Label>Car Listing URL or VIN?</Label>
