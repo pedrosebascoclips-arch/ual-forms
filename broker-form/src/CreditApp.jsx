@@ -495,7 +495,7 @@ export default function CreditApp() {
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: "28px" }}>
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            <h1 style={{ fontSize: "26px", fontWeight: "800", margin: "0 0 8px", letterSpacing: "-0.5px", background: "linear-gradient(135deg, #FFFFFF 0%, rgba(255,255,255,0.7) 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>UAL Credit Application</h1>
+            <h1 style={{ fontSize: "26px", fontWeight: "800", margin: "0 0 8px", letterSpacing: "-0.5px", background: "linear-gradient(135deg, #FFFFFF 0%, rgba(255,255,255,0.7) 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Credit Application</h1>
             <p style={{ fontSize: "14px", color: C.text3, margin: 0, lineHeight: 1.6 }}>
               You're one step closer to driving your brand new car.<br />
               Please fill out the information below so we can start working on your approval.
