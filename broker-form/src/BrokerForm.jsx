@@ -1,34 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SB_URL, SB_KEY, headers } from "./supabase";
 import { autoCapName, autoFmtPhone } from "./autoformat";
 import FileUpload from "./FileUpload";
 
-const CREDIT_APP_URL = "https://ual-credit-9vzxhrppb-pedrosebascoclips-6169s-projects.vercel.app";
 import DocUpload from "./DocUpload";
-
-// CRM-matched color tokens
-const C = {
-  bg: "#070B14",
-  surface: "rgba(255,255,255,0.03)",
-  surfaceHover: "rgba(255,255,255,0.06)",
-  glass: "rgba(255,255,255,0.04)",
-  glassHeavy: "rgba(12,16,28,0.88)",
-  input: "rgba(255,255,255,0.04)",
-  borderSubtle: "rgba(255,255,255,0.06)",
-  borderMedium: "rgba(255,255,255,0.10)",
-  borderFocus: "rgba(59,130,246,0.40)",
-  text1: "#FFFFFF",
-  text2: "rgba(255,255,255,0.65)",
-  text3: "rgba(255,255,255,0.30)",
-  text4: "rgba(255,255,255,0.15)",
-  blue: "#3B82F6",
-  green: "#34D399",
-  yellow: "#F59E0B",
-  red: "#EF4444",
-  purple: "#A78BFA",
-  cyan: "#22D3EE",
-};
+import { C } from "./theme";
 
 function Section({ title, icon, defaultOpen = false, accent, children }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -70,10 +47,12 @@ const Label = ({ children, required }) => (
 
 export default function BrokerForm() {
   const [form, setForm] = useState({
-    broker_name: "", client_name: "", phone: "", car_want: "", car_link: "", budget: "",
+    broker_name: "", client_name: "", phone: "", car_want: "",
+    car_input_type: "link", car_link: "", car_vin: "",
     deal_type: "Lease",
     trade_in: false, trade_details: "", trade_vin: "", notes: "",
   });
+  const [brokerId, setBrokerId] = useState(null);
   const [tradePhotos, setTradePhotos] = useState([]);
   const [insuranceDoc, setInsuranceDoc] = useState(null);
   const [registrationDoc, setRegistrationDoc] = useState(null);
@@ -83,28 +62,49 @@ export default function BrokerForm() {
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
-  const [brokerSuggestions, setBrokerSuggestions] = useState([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const brokerInputRef = useRef(null);
+  const [brokers, setBrokers] = useState([]);
+  const [brokerCode, setBrokerCode] = useState("");
+  const [brokerStatus, setBrokerStatus] = useState(null); // null | "found" | "not_found"
 
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(`${SB_URL}/rest/v1/clients?assigned_to=cs.{O}&select=broker_name&limit=500`, {
+        const r = await fetch(`${SB_URL}/rest/v1/brokers?active=eq.true&select=*`, {
           headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` },
         });
         if (!r.ok) return;
         const data = await r.json();
-        const names = [...new Set(data.map(c => c.broker_name).filter(Boolean))].sort();
-        setBrokerSuggestions(names);
+        if (Array.isArray(data)) setBrokers(data);
       } catch {}
     })();
   }, []);
 
+  const handleBrokerCodeChange = (code) => {
+    const val = code.toUpperCase();
+    setBrokerCode(val);
+    if (!val.trim()) {
+      setBrokerStatus(null);
+      setBrokerId(null);
+      setForm(p => ({ ...p, broker_name: "" }));
+      return;
+    }
+    const match = brokers.find(b => b.broker_code?.toUpperCase() === val.trim());
+    if (match) {
+      setBrokerStatus("found");
+      setBrokerId(match.id);
+      setForm(p => ({ ...p, broker_name: match.name || match.company || "" }));
+    } else {
+      setBrokerStatus("not_found");
+      setBrokerId(null);
+      setForm(p => ({ ...p, broker_name: "" }));
+    }
+  };
+
   const set = (key, val) => setForm(p => ({ ...p, [key]: val }));
 
   const handleSubmit = async () => {
-    if (!form.broker_name.trim()) { setError("Your name / company is required"); return; }
+    if (!brokerCode.trim()) { setError("Broker code is required"); return; }
+    if (brokerStatus !== "found") { setError("Please enter a valid broker code — contact UAL if you don't have one"); return; }
     if (!form.client_name.trim()) { setError("Client name is required"); return; }
     if (!form.phone.trim()) { setError("Client phone is required"); return; }
     setSubmitting(true); setError("");
@@ -113,7 +113,11 @@ export default function BrokerForm() {
         ? `\nTrade-in: ${form.trade_details.trim() || "Yes"}${form.trade_vin.trim() ? `\nVIN: ${form.trade_vin.trim()}` : ""}`
         : "";
       const extraNotes = form.notes.trim() ? `\n${form.notes.trim()}` : "";
-      const carLinkNote = form.car_link.trim() ? `\nCar Link: ${form.car_link.trim()}` : "";
+      const carLinkNote = form.car_input_type === "link" && form.car_link.trim()
+        ? `\nCar Link: ${form.car_link.trim()}`
+        : form.car_input_type === "vin" && form.car_vin.trim()
+        ? `\nCar VIN: ${form.car_vin.trim()}`
+        : "";
 
       const allFiles = [
         ...tradePhotos.map(f => ({ ...f, category: "Trade-In" })),
@@ -130,8 +134,8 @@ export default function BrokerForm() {
           name: form.client_name.trim(),
           phone: form.phone.trim(),
           car_want: form.car_want.trim(),
-          car_link: form.car_link.trim() || null,
-          budget: form.budget.trim() || null,
+          car_link: form.car_input_type === "link" ? form.car_link.trim() || null : null,
+          car_vin: form.car_input_type === "vin" ? form.car_vin.trim() || null : null,
           deal_type: form.deal_type,
           notes: `[Broker Form — ${form.broker_name.trim()}]${carLinkNote}${tradeNotes}${extraNotes}${attachNotes}`,
           attachments: attachmentsArr.length > 0 ? attachmentsArr : [],
@@ -139,6 +143,7 @@ export default function BrokerForm() {
           lead_source: "From",
           assigned_to: "O",
           broker_name: form.broker_name.trim(),
+          broker_id: brokerId || undefined,
           pinned: false,
           trade_in: form.trade_in,
           car_options: [],
@@ -214,10 +219,6 @@ export default function BrokerForm() {
 
   const fieldGap = { marginBottom: "14px" };
 
-  const filteredBrokers = form.broker_name.trim()
-    ? brokerSuggestions.filter(b => b.toLowerCase().includes(form.broker_name.toLowerCase()) && b !== form.broker_name)
-    : brokerSuggestions;
-
   // ═══ SUCCESS ═══
   if (done) return (
     <div style={{ minHeight: "100dvh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", fontFamily: "'Inter',-apple-system,sans-serif" }}>
@@ -229,28 +230,11 @@ export default function BrokerForm() {
           Thanks {form.broker_name.split(" ")[0] || ""}! We've received your client's info and will get to work on it.
         </p>
 
-        {/* Credit App CTA */}
-        <motion.a
-          href={CREDIT_APP_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.97 }}
-          style={{
-            display: "block", width: "100%", background: "linear-gradient(135deg, rgba(52,211,153,0.12), rgba(52,211,153,0.06))",
-            border: "1px solid rgba(52,211,153,0.25)", borderRadius: "14px", padding: "16px 20px",
-            color: C.green, fontSize: "15px", fontWeight: "700", textDecoration: "none",
-            fontFamily: "inherit", marginBottom: "10px", boxSizing: "border-box",
-            boxShadow: "0 4px 20px rgba(52,211,153,0.08)",
-          }}>
-          📋 Send Client to Credit App →
-        </motion.a>
-
         <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => {
           tradePhotos.forEach(f => { if (f.preview) URL.revokeObjectURL(f.preview); });
           [insuranceDoc, registrationDoc, licenseDoc].forEach(f => { if (f?.preview) URL.revokeObjectURL(f.preview); });
           setDone(false); setTradePhotos([]); setInsuranceDoc(null); setRegistrationDoc(null); setLicenseDoc(null);
-          setForm({ broker_name: form.broker_name, client_name: "", phone: "", car_want: "", car_link: "", budget: "", deal_type: "Lease", trade_in: false, trade_details: "", trade_vin: "", notes: "" });
+          setForm(p => ({ ...p, client_name: "", phone: "", car_want: "", car_input_type: "link", car_link: "", car_vin: "", deal_type: "Lease", trade_in: false, trade_details: "", trade_vin: "", notes: "" }));
         }} style={{
           width: "100%", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)",
           borderRadius: "12px", padding: "14px 28px", color: C.blue,
@@ -309,46 +293,43 @@ export default function BrokerForm() {
 
           {/* ═══ YOUR INFO ═══ */}
           <Section title="Your Info" icon="👤" defaultOpen accent={C.blue}>
-            <div style={{ position: "relative" }}>
-              <Label required>Your Name / Company</Label>
+            <div style={{ marginBottom: brokerStatus ? "10px" : "0" }}>
+              <Label required>Broker Code</Label>
               <input
-                ref={brokerInputRef}
-                value={form.broker_name}
-                onChange={e => { set("broker_name", autoCapName(e.target.value)); setShowSuggestions(true); }}
-                onFocus={() => setShowSuggestions(true)}
-                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                placeholder="Type or select broker..."
+                value={brokerCode}
+                onChange={e => handleBrokerCodeChange(e.target.value)}
+                placeholder="e.g. UAL-001"
                 style={{
                   width: "100%", padding: "14px 16px",
-                  background: C.input, border: `1px solid ${C.borderSubtle}`,
+                  background: C.input,
+                  border: `1px solid ${brokerStatus === "found" ? "rgba(52,211,153,0.35)" : brokerStatus === "not_found" ? "rgba(239,68,68,0.3)" : C.borderSubtle}`,
                   borderRadius: "12px", color: C.text1, fontSize: "15px",
                   outline: "none", fontFamily: "inherit",
                   boxSizing: "border-box", WebkitAppearance: "none",
                   minHeight: "48px", transition: "all 0.2s cubic-bezier(0.25,0.46,0.45,0.94)",
+                  letterSpacing: "1px",
+                }}
+                onFocus={e => { e.target.style.borderColor = C.borderFocus; e.target.style.boxShadow = "0 0 0 4px rgba(59,130,246,0.08)"; }}
+                onBlur={e => {
+                  e.target.style.borderColor = brokerStatus === "found" ? "rgba(52,211,153,0.35)" : brokerStatus === "not_found" ? "rgba(239,68,68,0.3)" : C.borderSubtle;
+                  e.target.style.boxShadow = "none";
                 }}
               />
-              {showSuggestions && filteredBrokers.length > 0 && (
-                <div style={{
-                  position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
-                  marginTop: "4px", maxHeight: "160px", overflowY: "auto",
-                  background: C.glassHeavy, backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
-                  border: `1px solid ${C.borderMedium}`, borderRadius: "12px",
-                  boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
-                }}>
-                  {filteredBrokers.slice(0, 8).map(b => (
-                    <button key={b} onMouseDown={() => { set("broker_name", b); setShowSuggestions(false); }}
-                      style={{
-                        width: "100%", padding: "12px 16px", background: "none", border: "none",
-                        borderBottom: `1px solid ${C.borderSubtle}`,
-                        color: C.text2, fontSize: "14px", fontWeight: "500",
-                        cursor: "pointer", fontFamily: "inherit", textAlign: "left",
-                      }}>
-                      {b}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
+            <AnimatePresence>
+              {brokerStatus === "found" && (
+                <motion.div key="found" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                  style={{ padding: "10px 14px", borderRadius: "10px", background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.2)", fontSize: "13px", color: C.green, fontWeight: "600" }}>
+                  Welcome, {form.broker_name}!
+                </motion.div>
+              )}
+              {brokerStatus === "not_found" && (
+                <motion.div key="not_found" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                  style={{ padding: "10px 14px", borderRadius: "10px", background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.15)", fontSize: "13px", color: C.text3, fontWeight: "500" }}>
+                  Code not found — contact UAL to get your broker code
+                </motion.div>
+              )}
+            </AnimatePresence>
           </Section>
 
           {/* ═══ CLIENT DETAILS ═══ */}
@@ -366,16 +347,31 @@ export default function BrokerForm() {
               {inp(form.car_want, "car_want", "e.g. BMW X5, Tesla Model Y")}
             </div>
             <div style={fieldGap}>
-              <Label>Car Link</Label>
-              {inp(form.car_link, "car_link", "Paste URL to listing...", { type: "url" })}
-            </div>
-            <div style={fieldGap}>
-              <Label>Monthly Budget</Label>
-              {inp(form.budget, "budget", "e.g. Under $500")}
+              <Label>Car Listing URL or VIN?</Label>
+              <div style={{ display: "flex", gap: "8px", background: C.input, borderRadius: "12px", border: `1px solid ${C.borderSubtle}`, padding: "4px", marginBottom: "8px" }}>
+                {[["link", "Car Listing URL"], ["vin", "VIN Number"]].map(([val, label]) => {
+                  const on = form.car_input_type === val;
+                  return (
+                    <motion.button key={val} whileTap={{ scale: 0.96 }} onClick={() => set("car_input_type", val)}
+                      style={{ flex: 1, padding: "10px 6px", borderRadius: "10px", fontSize: "13px", fontWeight: "600", cursor: "pointer", fontFamily: "inherit", minHeight: "40px", border: "none", background: on ? C.surfaceHover : "transparent", color: on ? C.purple : C.text3, transition: "all 0.2s ease" }}>
+                      {label}
+                    </motion.button>
+                  );
+                })}
+              </div>
+              {form.car_input_type === "link"
+                ? inp(form.car_link, "car_link", "Paste URL to listing...", { type: "url" })
+                : <input value={form.car_vin} onChange={e => set("car_vin", e.target.value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, "").slice(0, 17))}
+                    placeholder="e.g. 1HGBH41JXMN109186"
+                    style={{ width: "100%", padding: "14px 16px", background: C.input, border: `1px solid ${C.borderSubtle}`, borderRadius: "12px", color: C.text1, fontSize: "15px", outline: "none", fontFamily: "inherit", boxSizing: "border-box", minHeight: "48px" }}
+                    onFocus={e => { e.target.style.borderColor = C.borderFocus; e.target.style.boxShadow = "0 0 0 4px rgba(59,130,246,0.08)"; }}
+                    onBlur={e => { e.target.style.borderColor = C.borderSubtle; e.target.style.boxShadow = "none"; }}
+                  />
+              }
             </div>
             <div>
               <Label>Lease or Finance?</Label>
-              {toggle(["Lease", "Finance"], "deal_type", [C.purple, C.yellow])}
+              {toggle(["Lease", "Finance", "Both"], "deal_type", [C.purple, C.yellow, C.blue])}
             </div>
           </Section>
 
