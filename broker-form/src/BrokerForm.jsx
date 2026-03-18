@@ -16,6 +16,65 @@ const BROKER_STAGES = [
   ["Delivery Set",     "#22D3EE"],
 ];
 
+const STAGE_ORDER = ["Active", "Car Chosen", "Numbers Accepted", "App Submitted", "Approved", "Delivery Set"];
+
+function timeAgo(dateStr) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "1 day ago";
+  if (days < 7) return `${days} days ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks === 1) return "1 week ago";
+  return `${weeks} weeks ago`;
+}
+
+function ClientPipelineCard({ client }) {
+  const idx = STAGE_ORDER.indexOf(client.client_stage);
+  const progress = idx >= 0 ? ((idx + 1) / STAGE_ORDER.length) * 100 : 0;
+  return (
+    <div style={{
+      background: "rgba(255,255,255,0.06)",
+      backdropFilter: "blur(20px)",
+      border: "1px solid rgba(255,255,255,0.1)",
+      borderRadius: "14px",
+      overflow: "hidden",
+      marginBottom: "8px",
+    }}>
+      {/* Green progress bar at top */}
+      <div style={{ height: "3px", background: "rgba(255,255,255,0.08)", position: "relative" }}>
+        <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${progress}%`, background: "#34D399", transition: "width 0.6s ease", borderRadius: "999px" }} />
+      </div>
+      <div style={{ padding: "12px 14px" }}>
+        <div style={{ fontSize: "14px", fontWeight: "700", color: "#fff", marginBottom: "6px" }}>
+          {client.name || "Client"}
+        </div>
+        {/* Stage dots */}
+        <div style={{ display: "flex", alignItems: "center" }}>
+          {STAGE_ORDER.map((stage, i) => {
+            const done = idx >= i;
+            return (
+              <div key={stage} style={{ display: "flex", alignItems: "center", flex: 1 }}>
+                <div title={stage} style={{
+                  width: "8px", height: "8px", borderRadius: "50%", flexShrink: 0,
+                  background: done ? "#34D399" : "rgba(255,255,255,0.2)",
+                  boxShadow: done ? "0 0 5px rgba(52,211,153,0.5)" : "none",
+                }} />
+                {i < STAGE_ORDER.length - 1 && (
+                  <div style={{ flex: 1, height: "2px", background: (idx >= i + 1) ? "#34D399" : "rgba(255,255,255,0.1)" }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.45)", marginTop: "6px" }}>
+          {client.client_stage || "Active"} · {timeAgo(client.created_at)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Section({ title, icon, defaultOpen = false, accent, children }) {
   const [open, setOpen] = useState(defaultOpen);
   const clr = accent || C.text3;
@@ -75,6 +134,10 @@ export default function BrokerForm() {
   const [brokerCode, setBrokerCode] = useState("");
   const [brokerStatus, setBrokerStatus] = useState(null); // null | "found" | "not_found"
 
+  const [view, setView] = useState("success"); // "success" | "clients"
+  const [myClients, setMyClients] = useState([]);
+  const [loadingClients, setLoadingClients] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
@@ -107,6 +170,19 @@ export default function BrokerForm() {
       setBrokerId(null);
       setForm(p => ({ ...p, broker_name: "" }));
     }
+  };
+
+  const fetchMyClients = async (brokerIdArg) => {
+    setLoadingClients(true);
+    try {
+      const r = await fetch(
+        `${SB_URL}/rest/v1/clients?broker_id=eq.${brokerIdArg}&order=created_at.desc&limit=50&select=id,name,client_stage,created_at`,
+        { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
+      );
+      const data = await r.json();
+      setMyClients(Array.isArray(data) ? data : []);
+    } catch {}
+    setLoadingClients(false);
   };
 
   const set = (key, val) => setForm(p => ({ ...p, [key]: val }));
@@ -148,7 +224,7 @@ export default function BrokerForm() {
           attachments: attachmentsArr.length > 0 ? attachmentsArr : [],
           status: "active",
           lead_source: "From",
-          assigned_to: "O",
+          assigned_to: "",
           broker_name: form.broker_name.trim(),
           broker_id: brokerId || undefined,
           client_stage: form.client_stage || undefined,
@@ -229,25 +305,86 @@ export default function BrokerForm() {
   // ═══ SUCCESS ═══
   if (done) return (
     <div style={{ minHeight: "100dvh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", fontFamily: "'Inter',-apple-system,sans-serif" }}>
-      <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.5, ease: "easeOut" }} style={{ textAlign: "center", maxWidth: "400px" }}>
-        <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-          style={{ width: "88px", height: "88px", borderRadius: "50%", background: "rgba(52,211,153,0.08)", border: `2px solid rgba(52,211,153,0.25)`, margin: "0 auto 28px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "38px", backdropFilter: "blur(20px)" }}>✓</motion.div>
-        <h2 style={{ color: C.text1, fontSize: "26px", fontWeight: "800", margin: "0 0 10px" }}>Lead Submitted!</h2>
-        <p style={{ color: C.text3, fontSize: "15px", lineHeight: 1.7, margin: "0 0 20px" }}>
-          Thanks {form.broker_name.split(" ")[0] || ""}! We've received your client's info and will get to work on it.
-        </p>
+      <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.5, ease: "easeOut" }} style={{ textAlign: "center", maxWidth: "400px", width: "100%" }}>
 
-        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => {
-          tradePhotos.forEach(f => { if (f.preview) URL.revokeObjectURL(f.preview); });
-          [insuranceDoc, registrationDoc, licenseDoc].forEach(f => { if (f?.preview) URL.revokeObjectURL(f.preview); });
-          setDone(false); setTradePhotos([]); setInsuranceDoc(null); setRegistrationDoc(null); setLicenseDoc(null);
-          setForm(p => ({ ...p, client_name: "", car_want: "", car_input_type: "link", car_link: "", car_vin: "", deal_type: "Lease", client_stage: "", trade_in: false, trade_details: "", trade_vin: "", notes: "" }));
-        }} style={{
-          width: "100%", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)",
-          borderRadius: "12px", padding: "14px 28px", color: C.blue,
-          fontSize: "15px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", backdropFilter: "blur(20px)",
-          boxSizing: "border-box",
-        }}>Submit Another Lead</motion.button>
+        {/* Tab bar */}
+        <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
+          <button
+            onClick={() => setView("success")}
+            style={{
+              flex: 1, padding: "10px", borderRadius: "10px", border: "none", cursor: "pointer",
+              fontFamily: "inherit", fontSize: "13px", fontWeight: "700",
+              background: view === "success" ? "#34D399" : "rgba(255,255,255,0.08)",
+              color: view === "success" ? "#000" : "rgba(255,255,255,0.6)",
+              transition: "all 0.2s",
+            }}
+          >
+            ✓ Lead Submitted
+          </button>
+          <button
+            onClick={() => {
+              setView("clients");
+              if (myClients.length === 0) fetchMyClients(brokerId);
+            }}
+            style={{
+              flex: 1, padding: "10px", borderRadius: "10px", border: "none", cursor: "pointer",
+              fontFamily: "inherit", fontSize: "13px", fontWeight: "700",
+              background: view === "clients" ? "#34D399" : "rgba(255,255,255,0.08)",
+              color: view === "clients" ? "#000" : "rgba(255,255,255,0.6)",
+              transition: "all 0.2s",
+            }}
+          >
+            👥 My Clients
+          </button>
+        </div>
+
+        {view === "success" && (
+          <div>
+            <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
+              style={{ width: "88px", height: "88px", borderRadius: "50%", background: "rgba(52,211,153,0.08)", border: `2px solid rgba(52,211,153,0.25)`, margin: "0 auto 28px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "38px", backdropFilter: "blur(20px)" }}>✓</motion.div>
+            <h2 style={{ color: C.text1, fontSize: "26px", fontWeight: "800", margin: "0 0 10px" }}>Lead Submitted!</h2>
+            <p style={{ color: C.text3, fontSize: "15px", lineHeight: 1.7, margin: "0 0 20px" }}>
+              Thanks {form.broker_name.split(" ")[0] || ""}! We've received your client's info and will get to work on it.
+            </p>
+
+            <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => {
+              tradePhotos.forEach(f => { if (f.preview) URL.revokeObjectURL(f.preview); });
+              [insuranceDoc, registrationDoc, licenseDoc].forEach(f => { if (f?.preview) URL.revokeObjectURL(f.preview); });
+              setDone(false); setTradePhotos([]); setInsuranceDoc(null); setRegistrationDoc(null); setLicenseDoc(null);
+              setView("success"); setMyClients([]);
+              setForm(p => ({ ...p, client_name: "", car_want: "", car_input_type: "link", car_link: "", car_vin: "", deal_type: "Lease", client_stage: "", trade_in: false, trade_details: "", trade_vin: "", notes: "" }));
+            }} style={{
+              width: "100%", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)",
+              borderRadius: "12px", padding: "14px 28px", color: C.blue,
+              fontSize: "15px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", backdropFilter: "blur(20px)",
+              boxSizing: "border-box",
+            }}>Submit Another Lead</motion.button>
+          </div>
+        )}
+
+        {view === "clients" && (
+          <div style={{ textAlign: "left" }}>
+            {loadingClients ? (
+              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.5)", padding: "40px 0", fontSize: "13px" }}>Loading...</div>
+            ) : myClients.length === 0 ? (
+              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.4)", padding: "40px 0", fontSize: "13px" }}>No clients submitted yet</div>
+            ) : (() => {
+                const now = new Date();
+                const current = myClients.filter(c => (now - new Date(c.created_at)) < 30 * 86400000);
+                const previous = myClients.filter(c => (now - new Date(c.created_at)) >= 30 * 86400000);
+                return (
+                  <>
+                    {current.length > 0 && <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", fontWeight: "700", letterSpacing: "1px", textTransform: "uppercase", marginBottom: "8px" }}>This Month</div>}
+                    {current.map(c => <ClientPipelineCard key={c.id} client={c} />)}
+                    {previous.length > 0 && <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", fontWeight: "700", letterSpacing: "1px", textTransform: "uppercase", margin: "16px 0 8px" }}>Previous</div>}
+                    {previous.map(c => <ClientPipelineCard key={c.id} client={c} />)}
+                  </>
+                );
+              })()
+            }
+          </div>
+        )}
+
       </motion.div>
     </div>
   );
