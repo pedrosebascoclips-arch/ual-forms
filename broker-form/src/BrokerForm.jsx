@@ -191,6 +191,9 @@ export default function BrokerForm() {
   const [view, setView] = useState("success"); // "success" | "clients"
   const [myClients, setMyClients] = useState([]);
   const [loadingClients, setLoadingClients] = useState(false);
+  const [submittedClientId, setSubmittedClientId] = useState(null);
+  const [creditLinkCopied, setCreditLinkCopied] = useState(false);
+  const CREDIT_APP_URL = "https://ual-credit-app.vercel.app";
 
   useEffect(() => {
     (async () => {
@@ -292,7 +295,7 @@ export default function BrokerForm() {
           assigned_to: "",
           broker_name: form.broker_name.trim(),
           broker_id: brokerId || undefined,
-          client_stage: form.client_stage || undefined,
+          client_stage: form.client_stage || null,
           pinned: false,
           trade_in: form.trade_in,
           car_options: [],
@@ -300,7 +303,26 @@ export default function BrokerForm() {
         }),
       });
       if (!r.ok) throw new Error("Failed");
+      const created = await r.json();
+      const newId = created?.[0]?.id || null;
+      setSubmittedClientId(newId);
       setDone(true);
+      // Auto-switch to clients view and fetch
+      setView("clients");
+      fetchMyClients(brokerId);
+      // Auto-update stage to "Active" after 2 minutes
+      if (newId) {
+        setTimeout(async () => {
+          try {
+            await fetch(`${SB_URL}/rest/v1/clients?id=eq.${newId}`, {
+              method: "PATCH",
+              headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+              body: JSON.stringify({ client_stage: "Active" }),
+            });
+            setMyClients(prev => prev.map(c => c.id === newId ? { ...c, client_stage: "Active" } : c));
+          } catch {}
+        }, 2 * 60 * 1000);
+      }
     } catch (e) {
       console.error(e);
       setError("Something went wrong. Please try again.");
@@ -372,6 +394,28 @@ export default function BrokerForm() {
     <div style={{ minHeight: "100dvh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", fontFamily: "'Inter',-apple-system,sans-serif" }}>
       <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.5, ease: "easeOut" }} style={{ textAlign: "center", maxWidth: "400px", width: "100%" }}>
 
+        {/* Copy Credit App Link */}
+        <button onClick={() => {
+          const ta = document.createElement("textarea");
+          ta.value = CREDIT_APP_URL;
+          ta.style.cssText = "position:fixed;top:-9999px;opacity:0";
+          document.body.appendChild(ta); ta.focus(); ta.select();
+          try { document.execCommand("copy"); } catch {}
+          document.body.removeChild(ta);
+          setCreditLinkCopied(true);
+          setTimeout(() => setCreditLinkCopied(false), 2500);
+        }} style={{
+          width: "100%", marginBottom: "12px", padding: "13px 16px",
+          borderRadius: "12px", border: creditLinkCopied ? "1px solid rgba(52,211,153,0.35)" : "1px solid rgba(255,255,255,0.1)",
+          background: creditLinkCopied ? "rgba(52,211,153,0.08)" : "rgba(255,255,255,0.05)",
+          color: creditLinkCopied ? "#34D399" : "rgba(255,255,255,0.75)",
+          fontSize: "13px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+          transition: "all 0.2s", boxSizing: "border-box",
+        }}>
+          {creditLinkCopied ? "✓ Copied!" : "📋 Copy Credit App Link"}
+        </button>
+
         {/* Tab bar */}
         <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
           <button
@@ -416,7 +460,7 @@ export default function BrokerForm() {
               tradePhotos.forEach(f => { if (f.preview) URL.revokeObjectURL(f.preview); });
               [insuranceDoc, registrationDoc, licenseDoc].forEach(f => { if (f?.preview) URL.revokeObjectURL(f.preview); });
               setDone(false); setTradePhotos([]); setInsuranceDoc(null); setRegistrationDoc(null); setLicenseDoc(null);
-              setView("success"); setMyClients([]);
+              setView("success"); setMyClients([]); setSubmittedClientId(null); setCreditLinkCopied(false);
               setForm(p => ({ ...p, client_name: "", car_input_type: "link", car_link: "", car_vin: "", deal_type: "Lease", client_stage: "", trade_in: false, trade_details: "", trade_vin: "", notes: "" }));
             }} style={{
               width: "100%", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)",
