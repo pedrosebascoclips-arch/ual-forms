@@ -1,11 +1,20 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SB_URL, SB_KEY, headers } from "./supabase";
-import { autoCapName, autoFmtPhone } from "./autoformat";
+import { autoCapName } from "./autoformat";
 import FileUpload from "./FileUpload";
 
 import DocUpload from "./DocUpload";
 import { C } from "./theme";
+
+const BROKER_STAGES = [
+  ["Active",           "#6B7280"],
+  ["Car Chosen",       "#A78BFA"],
+  ["Numbers Accepted", "#F59E0B"],
+  ["App Submitted",    "#3B82F6"],
+  ["Approved",         "#34D399"],
+  ["Delivery Set",     "#22D3EE"],
+];
 
 function Section({ title, icon, defaultOpen = false, accent, children }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -47,9 +56,9 @@ const Label = ({ children, required }) => (
 
 export default function BrokerForm() {
   const [form, setForm] = useState({
-    broker_name: "", client_name: "", phone: "", car_want: "",
+    broker_name: "", client_name: "", car_want: "",
     car_input_type: "link", car_link: "", car_vin: "",
-    deal_type: "Lease",
+    deal_type: "Lease", client_stage: "",
     trade_in: false, trade_details: "", trade_vin: "", notes: "",
   });
   const [brokerId, setBrokerId] = useState(null);
@@ -106,7 +115,6 @@ export default function BrokerForm() {
     if (!brokerCode.trim()) { setError("Broker code is required"); return; }
     if (brokerStatus !== "found") { setError("Please enter a valid broker code — contact UAL if you don't have one"); return; }
     if (!form.client_name.trim()) { setError("Client name is required"); return; }
-    if (!form.phone.trim()) { setError("Client phone is required"); return; }
     setSubmitting(true); setError("");
     try {
       const tradeNotes = form.trade_in
@@ -132,7 +140,6 @@ export default function BrokerForm() {
         method: "POST", headers: headers(),
         body: JSON.stringify({
           name: form.client_name.trim(),
-          phone: form.phone.trim(),
           car_want: form.car_want.trim(),
           car_link: form.car_input_type === "link" ? form.car_link.trim() || null : null,
           car_vin: form.car_input_type === "vin" ? form.car_vin.trim() || null : null,
@@ -144,6 +151,7 @@ export default function BrokerForm() {
           assigned_to: "O",
           broker_name: form.broker_name.trim(),
           broker_id: brokerId || undefined,
+          client_stage: form.client_stage || undefined,
           pinned: false,
           trade_in: form.trade_in,
           car_options: [],
@@ -164,7 +172,6 @@ export default function BrokerForm() {
     <input value={val} onChange={e => {
       let v = e.target.value;
       if (key === "broker_name" || key === "client_name") v = autoCapName(v);
-      if (key === "phone") v = autoFmtPhone(v);
       if (key === "trade_vin") v = v.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, "").slice(0, 17);
       set(key, v);
     }}
@@ -234,7 +241,7 @@ export default function BrokerForm() {
           tradePhotos.forEach(f => { if (f.preview) URL.revokeObjectURL(f.preview); });
           [insuranceDoc, registrationDoc, licenseDoc].forEach(f => { if (f?.preview) URL.revokeObjectURL(f.preview); });
           setDone(false); setTradePhotos([]); setInsuranceDoc(null); setRegistrationDoc(null); setLicenseDoc(null);
-          setForm(p => ({ ...p, client_name: "", phone: "", car_want: "", car_input_type: "link", car_link: "", car_vin: "", deal_type: "Lease", trade_in: false, trade_details: "", trade_vin: "", notes: "" }));
+          setForm(p => ({ ...p, client_name: "", car_want: "", car_input_type: "link", car_link: "", car_vin: "", deal_type: "Lease", client_stage: "", trade_in: false, trade_details: "", trade_vin: "", notes: "" }));
         }} style={{
           width: "100%", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)",
           borderRadius: "12px", padding: "14px 28px", color: C.blue,
@@ -339,10 +346,6 @@ export default function BrokerForm() {
               {inp(form.client_name, "client_name", "Full name")}
             </div>
             <div style={fieldGap}>
-              <Label required>Client Phone</Label>
-              {inp(form.phone, "phone", "305-555-1234", { type: "tel" })}
-            </div>
-            <div style={fieldGap}>
               <Label>What Car Are They Looking For?</Label>
               {inp(form.car_want, "car_want", "e.g. BMW X5, Tesla Model Y")}
             </div>
@@ -372,6 +375,32 @@ export default function BrokerForm() {
             <div>
               <Label>Lease or Finance?</Label>
               {toggle(["Lease", "Finance", "Both"], "deal_type", [C.purple, C.yellow, C.blue])}
+            </div>
+          </Section>
+
+          {/* ═══ CLIENT STAGE ═══ */}
+          <Section title="Client Stage" icon="📍" defaultOpen={true} accent={C.cyan}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              {BROKER_STAGES.map(([stage, clr]) => {
+                const on = form.client_stage === stage;
+                return (
+                  <motion.button
+                    key={stage}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setForm(p => ({ ...p, client_stage: on ? "" : stage }))}
+                    style={{
+                      padding: "9px 14px", borderRadius: "999px", fontSize: "12px", fontWeight: "700",
+                      cursor: "pointer", fontFamily: "inherit",
+                      border: on ? `1px solid ${clr}40` : `1px solid ${C.borderSubtle}`,
+                      background: on ? `${clr}15` : "transparent",
+                      color: on ? clr : C.text3,
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    {stage}
+                  </motion.button>
+                );
+              })}
             </div>
           </Section>
 
